@@ -171,7 +171,7 @@ Project-LLMs-Rag-Agent/
 │   ├── project_report.tex        # LaTeX report
 │   └── README.md                 # Documentation guide
 │
-└── venv/                         # Virtual environment (không push lên Git)
+└── venv/                         # Virtual environment
 ```
 
 ---
