@@ -1,0 +1,25 @@
+# Virtual environment
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+smartdoc.log
+
+# Cache
+.cache/
+pip-cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large model files
+*.bin
+*.safetensors
