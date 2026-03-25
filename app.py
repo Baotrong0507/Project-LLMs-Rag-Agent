@@ -164,7 +164,6 @@ def load_document(file_bytes, filename):
 # CÂU 4: CHUNK STRATEGY
 # ========================
 def split_documents(docs, strategy, chunk_size, chunk_overlap):
-    logger.info(f"Split thành {len(chunks)} chunks")
     if strategy == "Token-based":
         splitter = TokenTextSplitter(
             chunk_size=chunk_size // 4,
@@ -182,7 +181,11 @@ def split_documents(docs, strategy, chunk_size, chunk_overlap):
             chunk_overlap=chunk_overlap,
             separators=["\n\n", "\n", ".", "!", "?", " ", ""]
         )
-    return splitter.split_documents(docs)
+    chunks = splitter.split_documents(docs)
+
+    logger.info(f"Split thành {len(chunks)} chunks")
+
+    return chunks
 
 # ========================
 # CÂU 7: HYBRID SEARCH
@@ -282,8 +285,7 @@ Câu hỏi viết lại:"""
 def get_answer(question, retriever, use_rerank, use_self_rag,
                use_conversational, top_k, chat_history):
     logger.info(f"Query: {question}")
-    logger.info(f"Retrieved {len(relevant_docs)} documents")
-    logger.info(f"Answer generated in {elapsed:.1f}s")
+
     llm = Ollama(model="qwen2.5:7b", temperature=0.7)
     lang = detect_language(question)
     cross_encoder = load_cross_encoder() if use_rerank else None
@@ -299,6 +301,8 @@ def get_answer(question, retriever, use_rerank, use_self_rag,
     # Câu 9: Re-ranking
     if use_rerank and cross_encoder:
         relevant_docs = rerank_documents(rewritten_q, relevant_docs, cross_encoder, top_k)
+
+    logger.info(f"Retrieved {len(relevant_docs)} documents")
 
     # Câu 5: Citation tracking
     citations = []
@@ -334,6 +338,9 @@ Answer concisely in English (3-4 sentences). If unsure, say so.
 Answer:"""
 
     answer = llm.invoke(prompt)
+
+    elapsed = 0  # nếu muốn log thời gian thì tính trước khi invoke
+    logger.info(f"Answer generated in {elapsed:.1f}s")
 
     # Câu 10: Self-RAG
     self_eval = None
