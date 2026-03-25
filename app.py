@@ -138,6 +138,7 @@ def load_cross_encoder():
 # CÂU 1: LOAD PDF VÀ DOCX
 # ========================
 def load_document(file_bytes, filename):
+    logger.info(f"Loading file: {filename}")	
     ext = filename.lower().split(".")[-1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
         tmp.write(file_bytes)
@@ -163,6 +164,7 @@ def load_document(file_bytes, filename):
 # CÂU 4: CHUNK STRATEGY
 # ========================
 def split_documents(docs, strategy, chunk_size, chunk_overlap):
+    logger.info(f"Split thành {len(chunks)} chunks")
     if strategy == "Token-based":
         splitter = TokenTextSplitter(
             chunk_size=chunk_size // 4,
@@ -279,7 +281,9 @@ Câu hỏi viết lại:"""
 # ========================
 def get_answer(question, retriever, use_rerank, use_self_rag,
                use_conversational, top_k, chat_history):
-
+    logger.info(f"Query: {question}")
+    logger.info(f"Retrieved {len(relevant_docs)} documents")
+    logger.info(f"Answer generated in {elapsed:.1f}s")
     llm = Ollama(model="qwen2.5:7b", temperature=0.7)
     lang = detect_language(question)
     cross_encoder = load_cross_encoder() if use_rerank else None
