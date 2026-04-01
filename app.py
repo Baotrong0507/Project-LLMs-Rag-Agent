@@ -25,7 +25,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.llms import Ollama
 from langchain.retrievers import BM25Retriever, EnsembleRetriever
 
-# Cross-encoder for re-ranking (Câu 9)
+# Cross-encoder for re-ranking
 try:
     from sentence_transformers import CrossEncoder
     CROSS_ENCODER_AVAILABLE = True
@@ -108,9 +108,9 @@ st.markdown("""
 # SESSION STATE INIT
 # ========================
 if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []        # Câu 2: Lưu lịch sử
+    st.session_state.chat_history = []
 if "documents_store" not in st.session_state:
-    st.session_state.documents_store = {}     # Câu 8: Multi-document
+    st.session_state.documents_store = {}     # key: filename, value: dict chứa chunks
 if "all_chunks" not in st.session_state:
     st.session_state.all_chunks = []
 
@@ -138,7 +138,7 @@ def load_cross_encoder():
 # CÂU 1: LOAD PDF VÀ DOCX
 # ========================
 def load_document(file_bytes, filename):
-    logger.info(f"Loading file: {filename}")	
+    logger.info(f"Loading file: {filename}")
     ext = filename.lower().split(".")[-1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
         tmp.write(file_bytes)
@@ -151,7 +151,6 @@ def load_document(file_bytes, filename):
         else:
             raise ValueError(f"Định dạng '{ext}' không được hỗ trợ!")
         docs = loader.load()
-        # Câu 8: Gắn metadata
         for doc in docs:
             doc.metadata["source_file"] = filename
             doc.metadata["file_type"] = ext
@@ -161,7 +160,7 @@ def load_document(file_bytes, filename):
         os.unlink(tmp_path)
 
 # ========================
-# CÂU 4: CHUNK STRATEGY
+# CÂU 4: CHUNK STRATEGY (ĐÃ SỬA)
 # ========================
 def split_documents(docs, strategy, chunk_size, chunk_overlap):
     if strategy == "Token-based":
@@ -181,14 +180,13 @@ def split_documents(docs, strategy, chunk_size, chunk_overlap):
             chunk_overlap=chunk_overlap,
             separators=["\n\n", "\n", ".", "!", "?", " ", ""]
         )
+    
     chunks = splitter.split_documents(docs)
-
     logger.info(f"Split thành {len(chunks)} chunks")
-
     return chunks
 
 # ========================
-# CÂU 7: HYBRID SEARCH
+# CÂU 7: BUILD RETRIEVER
 # ========================
 def build_retriever(chunks, embedder, search_mode, top_k):
     vector_store = FAISS.from_documents(chunks, embedder)
@@ -210,14 +208,14 @@ def build_retriever(chunks, embedder, search_mode, top_k):
             search_type="similarity",
             search_kwargs={"k": top_k}
         )
-    return retriever, vector_store
+    return retriever
 
 # ========================
 # CÂU 9: RE-RANKING
 # ========================
 def rerank_documents(query, docs, cross_encoder, top_k):
     if cross_encoder is None or len(docs) == 0:
-        return docs
+        return docs[:top_k]
     pairs = [(query, doc.page_content) for doc in docs]
     scores = cross_encoder.predict(pairs)
     scored = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
@@ -280,17 +278,18 @@ Câu hỏi viết lại:"""
     return question
 
 # ========================
-# HÀM TRẢ LỜI CHÍNH
+# HÀM TRẢ LỜI CHÍNH (ĐÃ SỬA)
 # ========================
 def get_answer(question, retriever, use_rerank, use_self_rag,
                use_conversational, top_k, chat_history):
+    
     logger.info(f"Query: {question}")
 
     llm = Ollama(model="qwen2.5:7b", temperature=0.7)
     lang = detect_language(question)
     cross_encoder = load_cross_encoder() if use_rerank else None
 
-    # Câu 10: Query rewriting
+    # Query rewriting
     rewritten_q = question
     if use_conversational and chat_history:
         rewritten_q = rewrite_query(llm, question, chat_history)
@@ -298,13 +297,13 @@ def get_answer(question, retriever, use_rerank, use_self_rag,
     # Lấy docs liên quan
     relevant_docs = retriever.get_relevant_documents(rewritten_q)
 
-    # Câu 9: Re-ranking
+    # Re-ranking
     if use_rerank and cross_encoder:
         relevant_docs = rerank_documents(rewritten_q, relevant_docs, cross_encoder, top_k)
 
     logger.info(f"Retrieved {len(relevant_docs)} documents")
 
-    # Câu 5: Citation tracking
+    # Citation tracking
     citations = []
     for i, doc in enumerate(relevant_docs):
         citations.append({
@@ -316,7 +315,7 @@ def get_answer(question, retriever, use_rerank, use_self_rag,
 
     context = "\n\n".join([doc.page_content for doc in relevant_docs])
 
-    # Câu 6: Conversational RAG
+    # Conversational history
     history_text = ""
     if use_conversational and chat_history:
         history_text = "\n".join([
@@ -337,17 +336,17 @@ Question: {question}
 Answer concisely in English (3-4 sentences). If unsure, say so.
 Answer:"""
 
+    t0 = time.time()
     answer = llm.invoke(prompt)
-
-    elapsed = 0  # nếu muốn log thời gian thì tính trước khi invoke
+    elapsed = time.time() - t0
     logger.info(f"Answer generated in {elapsed:.1f}s")
 
-    # Câu 10: Self-RAG
+    # Self-RAG
     self_eval = None
     if use_self_rag:
         self_eval = self_rag_evaluate(llm, question, answer, context)
 
-    return answer.strip(), citations, self_eval, rewritten_q
+    return answer.strip(), citations, self_eval, rewritten_q, elapsed
 
 # ========================
 # SIDEBAR
@@ -358,7 +357,7 @@ with st.sidebar:
 
     st.markdown("### 📐 Chunk Strategy (Câu 4)")
     chunk_strategy = st.selectbox(
-        "Chiến lược:",
+        "Chiến lược:", 
         ["Recursive (Mặc định)", "Token-based", "Paragraph-based"]
     )
     chunk_size = st.slider("Chunk Size", 500, 2000, 1000, 100)
@@ -405,21 +404,46 @@ with st.sidebar:
     else:
         st.caption("Chưa có lịch sử")
 
-    # Câu 3: Nút xóa
     st.markdown("---")
     st.markdown("### 🗑️ Xóa dữ liệu (Câu 3)")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🗑️ Xóa chat", use_container_width=True):
+    # Xóa Chat
+    if st.button("🗑️ Xóa lịch sử chat", use_container_width=True, type="secondary"):
+        st.session_state.confirm_delete_chat = True
+        st.rerun()
+    if st.session_state.get("confirm_delete_chat", False):
+        st.warning("**Bạn chắc chắn muốn xóa toàn bộ lịch sử chat?**")
+        st.caption("Hành động này không thể hoàn tác.")
+        if st.button("✅ Xác nhận xóa chat", use_container_width=True, type="primary"):
             st.session_state.chat_history = []
-            st.success("Đã xóa!")
+            st.session_state.confirm_delete_chat = False
+            st.success("✅ Đã xóa lịch sử chat!")
             st.rerun()
-    with col2:
-        if st.button("🗑️ Xóa docs", use_container_width=True):
+        if st.button("❌ Hủy", use_container_width=True):
+            st.session_state.confirm_delete_chat = False
+            st.rerun()
+    # Xóa Documents
+    if st.button("🗑️ Xóa tất cả tài liệu", use_container_width=True, type="secondary"):
+        st.session_state.confirm_delete_docs = True
+        st.rerun()
+    if st.session_state.get("confirm_delete_docs", False):
+        st.error("**Bạn chắc chắn muốn xóa TẤT CẢ tài liệu và vector store?**")
+        st.caption("Toàn bộ file đã upload sẽ bị xóa vĩnh viễn!")
+        
+        if st.button("✅ Xác nhận xóa tất cả docs", use_container_width=True, type="primary"):
             st.session_state.documents_store = {}
             st.session_state.all_chunks = []
-            st.success("Đã xóa!")
+            st.session_state.confirm_delete_docs = False
+            st.success("✅ Đã xóa tất cả tài liệu!")
             st.rerun()
+        
+        if st.button("❌ Hủy", use_container_width=True):
+            st.session_state.confirm_delete_docs = False
+            st.rerun()
+    # Khởi tạo session state (chỉ chạy lần đầu)
+    if "confirm_delete_chat" not in st.session_state:
+        st.session_state.confirm_delete_chat = False
+    if "confirm_delete_docs" not in st.session_state:
+        st.session_state.confirm_delete_docs = False
 
 # ========================
 # MAIN UI
@@ -428,7 +452,7 @@ st.title("📄 SmartDoc AI")
 st.markdown("**Hệ thống hỏi đáp thông minh** — RAG + Qwen2.5 | OSSD Spring 2026")
 st.markdown("---")
 
-# Câu 1 + Câu 8: Upload nhiều file PDF/DOCX
+# Upload tài liệu
 st.subheader("📤 Upload tài liệu — PDF & DOCX (Câu 1 + Câu 8)")
 uploaded_files = st.file_uploader(
     "Chọn file PDF hoặc DOCX (có thể chọn nhiều file cùng lúc)",
@@ -438,50 +462,44 @@ uploaded_files = st.file_uploader(
 
 if uploaded_files:
     embedder = load_embedder()
-    new_files = [f for f in uploaded_files
-                 if f.name not in st.session_state.documents_store]
+    new_files = [f for f in uploaded_files if f.name not in st.session_state.documents_store]
 
     if new_files:
         for uf in new_files:
-            with st.spinner(f"⏳ Xử lý **{uf.name}**..."):
+            with st.spinner(f"⏳ Đang xử lý **{uf.name}**..."):
                 try:
                     file_bytes = uf.read()
                     docs = load_document(file_bytes, uf.name)
                     chunks = split_documents(docs, chunk_strategy, chunk_size, chunk_overlap)
-                    retriever, vector_store = build_retriever(chunks, embedder, search_mode, top_k)
 
                     st.session_state.documents_store[uf.name] = {
                         "chunks": chunks,
-                        "retriever": retriever,
                         "num_chunks": len(chunks),
                         "upload_time": datetime.now().strftime("%H:%M %d/%m")
                     }
                     st.session_state.all_chunks.extend(chunks)
                     st.success(f"✅ **{uf.name}** — {len(chunks)} chunks")
                 except Exception as e:
-                    st.error(f"❌ Lỗi {uf.name}: {str(e)}")
+                    st.error(f"❌ Lỗi khi xử lý {uf.name}: {str(e)}")
     else:
-        st.info(f"✅ {len(uploaded_files)} file đã sẵn sàng")
+        st.info("✅ Tất cả file đã được tải lên trước đó.")
 
 # Phần Q&A
 if st.session_state.documents_store:
     st.markdown("---")
 
-    # Câu 8: Filter theo document
     all_doc_names = list(st.session_state.documents_store.keys())
+    selected_docs = all_doc_names
     if len(all_doc_names) > 1:
         st.subheader("🔎 Lọc tài liệu (Câu 8)")
         selected_docs = st.multiselect(
-            "Tìm kiếm trong tài liệu nào? (bỏ trống = tất cả)",
+            "Tìm kiếm trong những tài liệu nào? (bỏ trống = tất cả)",
             all_doc_names,
             default=all_doc_names
         )
-    else:
-        selected_docs = all_doc_names
 
     st.subheader("💬 Đặt câu hỏi")
 
-    # Hiển thị lịch sử dạng bubble chat
     if st.session_state.chat_history:
         st.markdown("#### 📜 Lịch sử hội thoại")
         for h in st.session_state.chat_history:
@@ -490,70 +508,66 @@ if st.session_state.documents_store:
         st.markdown("---")
 
     question = st.text_input(
-        "Nhập câu hỏi:",
-        placeholder="Ví dụ: Tài liệu này nói về gì?",
+        "Nhập câu hỏi của bạn:",
+        placeholder="Ví dụ: Tài liệu này nói về gì? Hoặc tóm tắt chương 2...",
         key="q_input"
     )
 
     if question:
-        # Gom chunks từ docs được chọn
+        # Gom chunks từ các tài liệu được chọn
         selected_chunks = []
-        for doc_name in (selected_docs if selected_docs else all_doc_names):
+        for doc_name in selected_docs:
             selected_chunks.extend(st.session_state.documents_store[doc_name]["chunks"])
 
-        with st.spinner("🤔 Đang xử lý câu trả lời..."):
-            try:
-                embedder = load_embedder()
-                retriever, _ = build_retriever(selected_chunks, embedder, search_mode, top_k)
+        if not selected_chunks:
+            st.warning("Không có nội dung nào để tìm kiếm.")
+        else:
+            with st.spinner("🤔 Đang tìm kiếm và sinh câu trả lời..."):
+                try:
+                    embedder = load_embedder()
+                    retriever = build_retriever(selected_chunks, embedder, search_mode, top_k)
 
-                t0 = time.time()
-                answer, citations, self_eval, rewritten_q = get_answer(
-                    question, retriever,
-                    use_rerank, use_self_rag, use_conversational,
-                    top_k, st.session_state.chat_history
-                )
-                elapsed = time.time() - t0
+                    answer, citations, self_eval, rewritten_q, elapsed = get_answer(
+                        question, retriever, use_rerank, use_self_rag,
+                        use_conversational, top_k, st.session_state.chat_history
+                    )
 
-                # Query rewriting info
-                if rewritten_q != question:
-                    st.caption(f"🔄 Câu hỏi được cải thiện (Câu 10): *{rewritten_q}*")
+                    if rewritten_q != question:
+                        st.caption(f"🔄 Câu hỏi được viết lại: *{rewritten_q}*")
 
-                # Câu trả lời
-                st.subheader("💡 Câu trả lời")
-                st.markdown(f'<div class="answer-box">{answer}</div>', unsafe_allow_html=True)
-                st.caption(f"⏱️ {elapsed:.1f}s")
+                    st.subheader("💡 Câu trả lời")
+                    st.markdown(f'<div class="answer-box">{answer}</div>', unsafe_allow_html=True)
+                    st.caption(f"⏱️ Thời gian xử lý: {elapsed:.1f} giây")
 
-                # Câu 10: Self-RAG
-                if use_self_rag and self_eval:
-                    score = self_eval.get("score", 0)
-                    icon = "🟢" if score >= 7 else "🟡" if score >= 5 else "🔴"
-                    st.info(f"{icon} **Self-RAG (Câu 10):** Điểm {score}/10 — {self_eval.get('reason', '')}")
+                    if use_self_rag and self_eval:
+                        score = self_eval.get("score", 0)
+                        icon = "🟢" if score >= 7 else "🟡" if score >= 5 else "🔴"
+                        st.info(f"{icon} **Self-RAG Evaluation:** Điểm {score}/10 — {self_eval.get('reason', '')}")
 
-                # Câu 5: Citations
-                with st.expander(f"📚 Nguồn tham khảo — {len(citations)} đoạn (Câu 5)"):
-                    for c in citations:
-                        st.markdown(f"""
-                        <div class="citation-box">
-                            <strong>[{c['index']}] 📄 {c['source']} — Trang {c['page']}</strong><br>
-                            <em>"{c['content']}..."</em>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    with st.expander(f"📚 Nguồn tham khảo — {len(citations)} đoạn (Câu 5)"):
+                        for c in citations:
+                            st.markdown(f"""
+                            <div class="citation-box">
+                                <strong>[{c['index']}] 📄 {c['source']} — Trang {c['page']}</strong><br>
+                                <em>"{c['content']}..."</em>
+                            </div>
+                            """, unsafe_allow_html=True)
 
-                # Câu 2: Lưu vào lịch sử
-                st.session_state.chat_history.append({
-                    "question": question,
-                    "answer": answer,
-                    "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
-                })
+                    # Lưu lịch sử
+                    st.session_state.chat_history.append({
+                        "question": question,
+                        "answer": answer,
+                        "timestamp": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
+                    })
 
-            except Exception as e:
-                if "connection" in str(e).lower() or "ollama" in str(e).lower():
-                    st.error("❌ Ollama chưa chạy! Mở terminal khác và chạy: `ollama serve`")
-                else:
-                    st.error(f"❌ Lỗi: {str(e)}")
-                    st.exception(e)
+                except Exception as e:
+                    if "ollama" in str(e).lower() or "connection" in str(e).lower():
+                        st.error("❌ Ollama chưa chạy! Hãy mở terminal và chạy lệnh: `ollama serve`")
+                    else:
+                        st.error(f"❌ Đã xảy ra lỗi: {str(e)}")
+                        st.exception(e)
 else:
-    st.info("👆 Upload file PDF hoặc DOCX để bắt đầu!")
+    st.info("👆 Vui lòng upload ít nhất một file PDF hoặc DOCX để bắt đầu.")
 
 st.markdown("---")
 st.caption("SmartDoc AI — Đại học Sài Gòn | OSSD Spring 2026 | Powered by LangChain + FAISS + Ollama")
