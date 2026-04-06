@@ -78,8 +78,7 @@
 | Dung lượng ổ cứng | 10 GB | 20 GB |
 | CPU | 4 cores | 8 cores |
 
-> ⚠️ **Lưu ý WSL (Windows):** Nên cài venv và model trên ổ D để tránh đầy ổ C.
-
+> ⚠️ **Lưu ý WSL (Windows):** Model Qwen2.5:7b và các package Python (~8GB) nên cài trên ổ D để tránh đầy ổ C.
 ---
 
 ## 🚀 Cài đặt
@@ -191,6 +190,15 @@ Project-LLMs-Rag-Agent/
 3. **Đặt câu hỏi** — Nhập câu hỏi bằng tiếng Việt hoặc tiếng Anh
 4. **Xem kết quả** — Câu trả lời + nguồn tham khảo hiển thị bên dưới
 
+
+### Tips để câu trả lời chính xác hơn
+
+- Đặt câu hỏi **cụ thể**, tránh quá chung chung
+- Dùng **từ khóa** có trong tài liệu
+- Chia câu hỏi phức tạp thành **nhiều câu nhỏ**
+
+
+
 ### Xử lý lỗi thường gặp
 
 | Lỗi | Nguyên nhân | Cách xử lý |
@@ -203,8 +211,6 @@ Project-LLMs-Rag-Agent/
 ---
 
 ## 🛠️ Hướng dẫn cho Developers
-
-> Nhờ tách module, mỗi thay đổi chỉ cần sửa **1 file duy nhất**.
 
 ### 7.2.1 — Customize Embedding Model
 **Sửa file:** `src/retriever.py`
@@ -222,7 +228,7 @@ EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 # Thử các giá trị chunk_size: 500, 1000, 1500, 2000
 # Thử các giá trị chunk_overlap: 50, 100, 200
 ```
-
+> **Gợi ý:** chunk nhỏ (500) → tìm kiếm chính xác hơn; chunk lớn (2000) → ngữ cảnh rộng hơn.
 ### 7.2.3 — Thay đổi LLM Model
 **Sửa file:** `src/rag_engine.py`
 ```python
@@ -256,7 +262,7 @@ Log được ghi tự động vào file `smartdoc.log` và hiện trên terminal
 ---
 
 ## 🧪 Chạy Tests
-
+### Cài đặt test dependencies
 ```bash
 pip install pytest pytest-cov pytest-mock
 
@@ -290,6 +296,11 @@ python test_smartdoc.py
 
 ---
 
+## 📝 License
+
+MIT License — Free to use for educational purposes
+
+---
 <div align="center">
   <strong>SmartDoc AI</strong> · Đại học Sài Gòn · OSSD Spring 2026<br>
   Powered by LangChain · FAISS · Ollama · Streamlit
