@@ -16,7 +16,7 @@ def render_sidebar() -> dict:
         st.markdown("---")
 
         # ── Câu 4: Chunk Strategy
-        st.markdown("### 📐 Chunk Strategy (Câu 4)")
+        st.markdown("### 📐 Chunk Strategy")
         chunk_strategy = st.selectbox(
             "Chiến lược:",
             ["Recursive (Mặc định)", "Token-based", "Paragraph-based"]
@@ -27,10 +27,10 @@ def render_sidebar() -> dict:
         st.markdown("---")
 
         # ── Câu 7: Search Mode
-        st.markdown("### 🔍 Search Mode (Câu 7)")
+        st.markdown("### 🔍 Search Mode")
         search_mode = st.selectbox(
             "Chế độ tìm kiếm:",
-            ["Similarity (Mặc định)", "Hybrid (Vector + BM25)", "MMR (Đa dạng)"]
+            ["Similarity (Mặc định)", "Hybrid (Vector + BM25)", "MMR (Đa dạng)", "GraphRAG (Neo4j)"]
         )
         top_k = st.slider("Top K kết quả", 1, 10, 3)
 
@@ -38,9 +38,9 @@ def render_sidebar() -> dict:
 
         # ── Advanced Features
         st.markdown("### 🚀 Tính năng nâng cao")
-        use_rerank         = st.checkbox("Re-ranking Cross-Encoder (Câu 9)",  value=False)
-        use_self_rag       = st.checkbox("Self-RAG Evaluation (Câu 10)",      value=False)
-        use_conversational = st.checkbox("Conversational RAG (Câu 6)",        value=True)
+        use_rerank         = st.checkbox("Re-ranking Cross-Encoder",  value=False)
+        use_self_rag       = st.checkbox("Self-RAG Evaluation)",      value=False)
+        use_conversational = st.checkbox("Conversational RAG",        value=True)
 
         st.markdown("---")
 
@@ -53,7 +53,7 @@ def render_sidebar() -> dict:
         st.markdown("---")
 
         # ── Câu 8: Documents uploaded
-        st.markdown("### 📁 Tài liệu (Câu 8)")
+        st.markdown("### 📁 Tài liệu")
         if st.session_state.documents_store:
             for fname, info in st.session_state.documents_store.items():
                 st.markdown(
@@ -67,7 +67,7 @@ def render_sidebar() -> dict:
         st.markdown("---")
 
         # ── Câu 2: Chat history
-        st.markdown("### 💬 Lịch sử (Câu 2)")
+        st.markdown("### 💬 Lịch sử")
         if st.session_state.chat_history:
             st.caption(f"{len(st.session_state.chat_history)} câu hỏi")
             for i, h in enumerate(st.session_state.chat_history[-5:]):
@@ -81,7 +81,7 @@ def render_sidebar() -> dict:
         st.markdown("---")
 
         # ── Câu 3: Clear buttons với confirmation dialog
-        st.markdown("### 🗑️ Xóa dữ liệu (Câu 3)")
+        st.markdown("### 🗑️ Xóa dữ liệu")
         _render_clear_buttons()
 
     return {

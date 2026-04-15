@@ -6,7 +6,8 @@ Câu 10: Self-RAG Evaluation + Query Rewriting
 """
 import json
 import time
-from langchain_ollama import OllamaLLM as Ollama
+from langchain_ollama import OllamaLLM
+from langchain_community.llms import Ollama
 from src.logger import logger
 from src.retriever import rerank_documents, load_cross_encoder
 
@@ -99,7 +100,8 @@ def get_answer(
     logger.info(f"Query: {question}")
 
     # 7.2.3: Khởi tạo LLM
-    llm  = Ollama(model=LLM_MODEL, temperature=TEMPERATURE)
+    llm = OllamaLLM(model=LLM_MODEL, temperature=TEMPERATURE)
+    
     lang = detect_language(question)
     logger.info(f"Language detected: {lang}")
 
@@ -109,7 +111,11 @@ def get_answer(
         rewritten_q = rewrite_query(llm, question, chat_history)
 
     # Retrieval
-    relevant_docs = retriever.invoke(rewritten_q)
+    # Hỗ trợ cả invoke() và get_relevant_documents()
+    if hasattr(retriever, "invoke"):
+        relevant_docs = retriever.invoke(rewritten_q)
+    else:
+        relevant_docs = retriever.get_relevant_documents(rewritten_q)
     logger.info(f"Retrieved {len(relevant_docs)} documents")
 
     # Câu 9: Re-ranking

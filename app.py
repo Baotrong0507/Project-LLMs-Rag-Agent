@@ -82,7 +82,7 @@ st.markdown("**Hệ thống hỏi đáp thông minh** — RAG + Qwen2.5 | OSSD S
 st.markdown("---")
 
 # ── Câu 1 + 8: Upload PDF & DOCX (nhiều file)
-st.subheader("📤 Upload tài liệu — PDF & DOCX (Câu 1 + Câu 8)")
+st.subheader("📤 Upload tài liệu — PDF & DOCX")
 uploaded_files = st.file_uploader(
     "Chọn file PDF hoặc DOCX (có thể chọn nhiều file cùng lúc)",
     type=["pdf", "docx"],
@@ -110,6 +110,7 @@ if uploaded_files:
                     }
                     st.session_state.all_chunks.extend(chunks)
                     st.success(f"✅ **{uf.name}** — {len(chunks)} chunks")
+                    st.session_state["q_input"] = ""
 
                 except Exception as e:
                     st.error(f"❌ Lỗi khi xử lý {uf.name}: {str(e)}")
@@ -153,7 +154,9 @@ if st.session_state.documents_store:
             with st.spinner("🤔 Đang tìm kiếm và sinh câu trả lời..."):
                 try:
                     embedder  = load_embedder()
-                    retriever = build_retriever(selected_chunks, embedder, search_mode, top_k)
+                    # Lấy filename đầu tiên trong selected_docs
+                    current_filename = selected_docs[0] if selected_docs else None
+                    retriever = build_retriever(selected_chunks, embedder, search_mode, top_k, current_filename)
 
                     answer, citations, self_eval, rewritten_q, elapsed = get_answer(
                         question, retriever,
