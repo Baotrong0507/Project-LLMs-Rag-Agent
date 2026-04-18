@@ -32,27 +32,42 @@ def extract_entities(text: str) -> list:
 
 def build_graph_from_chunks(chunks: list, filename: str):
     driver = get_driver()
-    logger.info(f"[GraphRAG] Building graph for {filename} ({len(chunks)} chunks)")
+    logger.info(f"[GraphRAG] Building/checking graph for {filename} ({len(chunks)} chunks)")
 
     with driver.session() as session:
+        # Kiểm tra graph đã tồn tại chưa (sửa bug: dùng session đúng)
+        result = session.run("""
+            MATCH (d:Document {source_file: $f})
+            RETURN count(d) as count
+        """, f=filename)
+        
+        if result.single()["count"] > 0:
+            logger.info(f"[INFO] Graph for {filename} already exists. Skipping build.")
+            driver.close()
+            return
+
+        # Xóa cũ (nếu cần)
         session.run("MATCH (n {source_file: $f}) DETACH DELETE n", f=filename)
 
         for i, chunk in enumerate(chunks):
             text = chunk.page_content
             entities = extract_entities(text)
 
+            # Tạo Document node
+            chunk_id = f"{filename}_{i}"
             session.run("""
                 MERGE (d:Document {chunk_id: $id})
-                SET d.content = $content, d.source_file = $file
-            """, {"id": f"{filename}_{i}", "content": text[:700], "file": filename})
+                SET d.content = $content, 
+                    d.source_file = $file,
+                    d.chunk_index = $idx
+            """, {"id": chunk_id, "content": text[:1000], "file": filename, "idx": i})
 
+            # Tạo Entity và relationship
             for e in entities:
                 session.run("""
                     MERGE (e:Entity {name: $name, source_file: $file})
-                    WITH e
-                    MATCH (d:Document {chunk_id: $id})
-                    MERGE (d)-[:CONTAINS]->(e)
-                """, {"name": e, "file": filename, "id": f"{filename}_{i}"})
+                    MERGE (d:Document {chunk_id: $id})-[:CONTAINS]->(e)
+                """, {"name": e, "file": filename, "id": chunk_id})
 
     driver.close()
     logger.info(f"[GraphRAG] Build completed for {filename}")
@@ -63,31 +78,57 @@ def query_graph(question: str, filename: str = None, top_k: int = 3):
     docs = []
 
     with driver.session() as session:
-        # Kiểm tra tổng số Document nodes
         count = session.run("MATCH (d:Document) RETURN count(d) as cnt").single()["cnt"]
         logger.info(f"[GraphRAG] Total Document nodes in Neo4j: {count}")
 
         if count == 0:
-            logger.warning("[GraphRAG] ⚠️ Neo4j is completely empty!")
+            logger.warning("[GraphRAG] ⚠️ Neo4j is empty!")
             driver.close()
             return []
 
-        # FULL FALLBACK - Lấy tất cả documents không cần filter filename
-        logger.info("[GraphRAG] Full fallback - Getting all documents")
+        # === CẢI TIẾN: Tìm theo Entity liên quan đến question ===
+        logger.info(f"[GraphRAG] Searching graph for question: {question[:100]}...")
+
         result = session.run("""
-            MATCH (d:Document)
-            RETURN d.content as content, d.page as page
+            // Tìm entities khớp với từ trong question (text search)
+            CALL db.index.fulltext.queryNodes("entityNameIndex", $query) YIELD node, score
+            WITH node as e, score
+            MATCH (d:Document)-[:CONTAINS]->(e)
+            WHERE ($filename IS NULL OR d.source_file = $filename)
+            RETURN DISTINCT d.content as content, d.chunk_index as page, score
+            ORDER BY score DESC
             LIMIT $limit
-        """, {"limit": top_k * 6})
+        """, {
+            "query": question, 
+            "filename": filename,
+            "limit": top_k * 5
+        })
 
         for r in result:
             docs.append(Document(
                 page_content=r["content"],
-                metadata={"method": "fallback", "page": r.get("page")}
+                metadata={
+                    "method": "graph_entity",
+                    "score": r["score"],
+                    "page": r.get("page")
+                }
             ))
 
+        # Nếu không tìm được gì → fallback nhẹ
+        if len(docs) == 0:
+            logger.info("[GraphRAG] No graph match → light fallback")
+            result = session.run("""
+                MATCH (d:Document)
+                WHERE ($filename IS NULL OR d.source_file = $filename)
+                RETURN d.content as content, d.chunk_index as page
+                LIMIT $limit
+            """, {"filename": filename, "limit": top_k * 3})
+            
+            for r in result:
+                docs.append(Document(page_content=r["content"], metadata={"method": "fallback"}))
+
     driver.close()
-    logger.info(f"[GraphRAG] Retrieved {len(docs)} documents (full fallback)")
+    logger.info(f"[GraphRAG] Retrieved {len(docs)} documents via graph")
     return docs[:top_k]
 
 

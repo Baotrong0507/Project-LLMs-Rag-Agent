@@ -1,15 +1,15 @@
 """
 ui/sidebar.py
 Toàn bộ sidebar: settings, file list, history, nút xóa.
-Câu 2, 3, 4, 6, 7, 8, 9, 10
+Đã cập nhật Search Mode với nhóm Vector-based và GraphRAG-based
 """
+
 import streamlit as st
 
 
 def render_sidebar() -> dict:
     """
     Render sidebar và trả về dict config người dùng chọn.
-    Tách riêng để main app chỉ cần: config = render_sidebar()
     """
     with st.sidebar:
         st.title("⚙️ Cài đặt")
@@ -26,12 +26,22 @@ def render_sidebar() -> dict:
 
         st.markdown("---")
 
-        # ── Câu 7: Search Mode
+        # ── Câu 7: Search Mode (ĐÃ NHÓM RÕ RÀNG)
         st.markdown("### 🔍 Search Mode")
+        
         search_mode = st.selectbox(
             "Chế độ tìm kiếm:",
-            ["Similarity (Mặc định)", "Hybrid (Vector + BM25)", "MMR (Đa dạng)", "GraphRAG (Neo4j)"]
+            [
+                "Vector-based",
+                "   • Similarity (Mặc định)",
+                "   • Hybrid (Vector + BM25)",
+                "   • MMR (Đa dạng)",
+                "GraphRAG-based",
+                "   • GraphRAG Cơ bản",
+                "   • GraphRAG + Vector Hybrid (Khuyến nghị)"
+            ]
         )
+        
         top_k = st.slider("Top K kết quả", 1, 10, 3)
 
         st.markdown("---")
@@ -39,7 +49,7 @@ def render_sidebar() -> dict:
         # ── Advanced Features
         st.markdown("### 🚀 Tính năng nâng cao")
         use_rerank         = st.checkbox("Re-ranking Cross-Encoder",  value=False)
-        use_self_rag       = st.checkbox("Self-RAG Evaluation)",      value=False)
+        use_self_rag       = st.checkbox("Self-RAG Evaluation",       value=False)
         use_conversational = st.checkbox("Conversational RAG",        value=True)
 
         st.markdown("---")
@@ -49,6 +59,7 @@ def render_sidebar() -> dict:
         st.info("**LLM:** Qwen2.5:7b (Ollama)")
         st.info("**Embedding:** multilingual-mpnet (768d)")
         st.info("**Vector DB:** FAISS")
+        st.info("**Graph DB:** Neo4j")
 
         st.markdown("---")
 
@@ -80,26 +91,24 @@ def render_sidebar() -> dict:
 
         st.markdown("---")
 
-        # ── Câu 3: Clear buttons với confirmation dialog
+        # ── Câu 3: Clear buttons
         st.markdown("### 🗑️ Xóa dữ liệu")
         _render_clear_buttons()
 
     return {
-        "chunk_strategy":    chunk_strategy,
-        "chunk_size":        chunk_size,
-        "chunk_overlap":     chunk_overlap,
-        "search_mode":       search_mode,
-        "top_k":             top_k,
-        "use_rerank":        use_rerank,
-        "use_self_rag":      use_self_rag,
+        "chunk_strategy":     chunk_strategy,
+        "chunk_size":         chunk_size,
+        "chunk_overlap":      chunk_overlap,
+        "search_mode":        search_mode,          # ← Chuỗi có dấu cách + emoji
+        "top_k":              top_k,
+        "use_rerank":         use_rerank,
+        "use_self_rag":       use_self_rag,
         "use_conversational": use_conversational,
     }
 
 
 def _render_clear_buttons():
     """Câu 3: Nút xóa với confirmation dialog"""
-
-    # Khởi tạo session state
     if "confirm_delete_chat" not in st.session_state:
         st.session_state.confirm_delete_chat = False
     if "confirm_delete_docs" not in st.session_state:
@@ -116,7 +125,7 @@ def _render_clear_buttons():
         c1, c2 = st.columns(2)
         with c1:
             if st.button("✅ Xác nhận", key="confirm_chat", use_container_width=True):
-                st.session_state.chat_history        = []
+                st.session_state.chat_history = []
                 st.session_state.confirm_delete_chat = False
                 st.success("✅ Đã xóa lịch sử chat!")
                 st.rerun()
@@ -136,10 +145,10 @@ def _render_clear_buttons():
         d1, d2 = st.columns(2)
         with d1:
             if st.button("✅ Xác nhận", key="confirm_docs", use_container_width=True):
-                st.session_state.documents_store     = {}
-                st.session_state.all_chunks          = []
+                st.session_state.documents_store = {}
+                st.session_state.all_chunks = []
                 if "uploader_key" not in st.session_state:
-                        st.session_state.uploader_key = 0
+                    st.session_state.uploader_key = 0
                 st.session_state.uploader_key += 1
                 st.session_state.confirm_delete_docs = False
                 st.success("✅ Đã xóa tất cả tài liệu!")

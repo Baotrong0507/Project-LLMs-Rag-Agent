@@ -66,46 +66,47 @@ def load_cross_encoder():
 def build_retriever(chunks: list, embedder, search_mode: str, top_k: int,
                     filename: str = None):
     """
-    Tạo retriever theo search mode được chọn:
-    - Similarity:        Vector search thuần (FAISS)
-    - Hybrid:            BM25 + Vector ensemble
-    - MMR:               Maximum Marginal Relevance
-    - GraphRAG (Neo4j):  Knowledge Graph traversal
-
-    7.2.4: Sửa search_kwargs bên dưới để thay đổi retrieval params
+    Tạo retriever theo search mode được chọn từ sidebar.
+    Hỗ trợ cả hai nhóm: Vector-based và GraphRAG-based.
     """
 
-    # GraphRAG — dùng Neo4j thay vì FAISS
-    if search_mode == "GraphRAG (Neo4j)":
-        if not filename:
-            logger.warning("GraphRAG needs filename but got None")
+    # ========================
+    # Mapping search_mode từ sidebar (có emoji và khoảng trắng)
+    # ========================
+    mode = search_mode.strip()
+
+    if "GraphRAG + Vector Hybrid" in mode:
+        return _build_graph_hybrid_retriever(chunks, embedder, filename, top_k)
+    
+    elif "GraphRAG Cơ bản" in mode:
         return _build_graph_retriever(chunks, filename, top_k)
 
-    # Các mode còn lại dùng FAISS
+    # ========================
+    # Vector-based RAG (FAISS)
+    # ========================
     vector_store = FAISS.from_documents(chunks, embedder)
 
-    if search_mode == "Hybrid (Vector + BM25)":
-        vector_retriever = vector_store.as_retriever(
-            search_kwargs={"k": top_k}
-        )
-        bm25_retriever   = BM25Retriever.from_documents(chunks)
+    if "Hybrid (Vector + BM25)" in mode:
+        vector_retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
+        bm25_retriever = BM25Retriever.from_documents(chunks)
         bm25_retriever.k = top_k
+        
         retriever = EnsembleRetriever(
             retrievers=[bm25_retriever, vector_retriever],
-            weights=[0.4, 0.6]          # BM25:40% Vector:60%
+            weights=[0.4, 0.6]          # BM25: 40% - Vector: 60%
         )
 
-    elif search_mode == "MMR (Đa dạng)":
+    elif "MMR (Đa dạng)" in mode:
         retriever = vector_store.as_retriever(
             search_type="mmr",
             search_kwargs={
                 "k":           top_k,
                 "fetch_k":     top_k * 3,
-                "lambda_mult": 0.7      # 0=đa dạng, 1=giống nhau
+                "lambda_mult": 0.7      # Càng nhỏ càng đa dạng
             }
         )
 
-    else:  # Similarity (mặc định)
+    else:  # Similarity (Mặc định) hoặc các mode khác
         retriever = vector_store.as_retriever(
             search_type="similarity",
             search_kwargs={"k": top_k}
@@ -151,3 +152,41 @@ def rerank_documents(query: str, docs: list, cross_encoder, top_k: int) -> list:
     scored = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
     logger.info(f"Re-ranked {len(docs)} docs → top {top_k}")
     return [doc for _, doc in scored[:top_k]]
+
+def _build_graph_hybrid_retriever(chunks: list, embedder, filename: str = None, top_k: int = 3):
+    """GraphRAG + Vector Hybrid - Phiên bản ổn định"""
+    from src.graph_rag import graph_retriever_for_file
+
+    graph_retriever = _build_graph_retriever(chunks, filename, top_k)
+
+    vector_store = FAISS.from_documents(chunks, embedder)
+    vector_retriever = vector_store.as_retriever(search_kwargs={"k": top_k * 3})
+
+    class HybridGraphRetriever:
+        def __init__(self, graph_ret, vector_ret, top_k):
+            self.graph_ret = graph_ret
+            self.vector_ret = vector_ret
+            self.top_k = top_k
+
+        def invoke(self, query):
+            return self.get_relevant_documents(query)
+
+        def get_relevant_documents(self, query):
+            try:
+                graph_docs = self.graph_ret.get_relevant_documents(query)
+            except:
+                graph_docs = []
+
+            # Nếu Graph trả về quá ít hoặc lỗi → lấy từ Vector
+            if len(graph_docs) < self.top_k // 2:
+                try:
+                    vector_docs = self.vector_ret.get_relevant_documents(query)
+                    # Kết hợp, ưu tiên graph_docs
+                    combined = graph_docs + [d for d in vector_docs if d not in graph_docs]
+                    return combined[:self.top_k * 2]
+                except:
+                    return graph_docs[:self.top_k]
+            
+            return graph_docs[:self.top_k]
+
+    return HybridGraphRetriever(graph_retriever, vector_retriever, top_k)

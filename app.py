@@ -1,20 +1,8 @@
 """
 app.py — Entry point của SmartDoc AI
-Chỉ chứa luồng chính, mọi logic đã tách vào src/ và ui/
-
-Cấu trúc:
-    app.py              ← Entry point (file này)
-    src/
-        logger.py       ← Logging config (7.2.5)
-        document_loader.py  ← Load PDF/DOCX (Câu 1)
-        chunker.py      ← Chunk strategy (Câu 4)
-        retriever.py    ← Hybrid search + Re-ranking (Câu 7, 9)
-        rag_engine.py   ← RAG pipeline, Self-RAG (Câu 6, 10)
-    ui/
-        styles.py       ← CSS (chỉ sửa đây khi đổi giao diện)
-        sidebar.py      ← Sidebar UI (Câu 2, 3, 4, 7, 8)
-        components.py   ← Reusable components
+Đã cập nhật xử lý Search Mode với nhóm Vector-based & GraphRAG-based
 """
+
 import streamlit as st
 from datetime import datetime
 
@@ -54,25 +42,50 @@ load_styles()
 # SESSION STATE
 # ========================
 if "chat_history"    not in st.session_state:
-    st.session_state.chat_history    = []   # Câu 2
+    st.session_state.chat_history    = []
 if "documents_store" not in st.session_state:
-    st.session_state.documents_store = {}   # Câu 8
+    st.session_state.documents_store = {}
 if "all_chunks"      not in st.session_state:
     st.session_state.all_chunks      = []
+if "uploader_key"    not in st.session_state:
+    st.session_state.uploader_key    = 0
 
 # ========================
-# SIDEBAR — trả về config
+# SIDEBAR
 # ========================
 config = render_sidebar()
 
 chunk_strategy    = config["chunk_strategy"]
 chunk_size        = config["chunk_size"]
 chunk_overlap     = config["chunk_overlap"]
-search_mode       = config["search_mode"]
+search_mode       = config["search_mode"]      # ← Chuỗi có dấu cách + emoji
 top_k             = config["top_k"]
 use_rerank        = config["use_rerank"]
 use_self_rag      = config["use_self_rag"]
 use_conversational = config["use_conversational"]
+
+# ========================
+# XỬ LÝ SEARCH MODE (Mapping từ tên hiển thị sang logic thực tế)
+# ========================
+def get_real_search_mode(display_mode: str) -> str:
+    """Chuyển đổi từ chuỗi hiển thị sang mode thực tế dùng trong build_retriever"""
+    display_mode = display_mode.strip()
+    
+    if "GraphRAG + Vector Hybrid" in display_mode:
+        return "GraphRAG_Hybrid"
+    elif "GraphRAG Cơ bản" in display_mode:
+        return "GraphRAG"
+    elif "Hybrid (Vector + BM25)" in display_mode:
+        return "Hybrid"
+    elif "MMR (Đa dạng)" in display_mode:
+        return "MMR"
+    elif "Similarity (Mặc định)" in display_mode:
+        return "Similarity"
+    else:
+        return "Similarity"  # fallback
+
+
+real_search_mode = get_real_search_mode(search_mode)
 
 # ========================
 # MAIN UI
@@ -81,19 +94,18 @@ st.title("📄 SmartDoc AI")
 st.markdown("**Hệ thống hỏi đáp thông minh** — RAG + Qwen2.5 | OSSD Spring 2026")
 st.markdown("---")
 
-# ── Câu 1 + 8: Upload PDF & DOCX (nhiều file)
-st.subheader("📤 Upload tài liệu — PDF & DOCX")
+# ── Upload tài liệu
+st.subheader("📤 Upload tài liệu — PDF & DOCX ")
 uploaded_files = st.file_uploader(
     "Chọn file PDF hoặc DOCX (có thể chọn nhiều file cùng lúc)",
     type=["pdf", "docx"],
     accept_multiple_files=True,
-    key=st.session_state.get("uploader_key",0)
+    key=st.session_state.uploader_key
 )
 
 if uploaded_files:
-    embedder  = load_embedder()
-    new_files = [f for f in uploaded_files
-                 if f.name not in st.session_state.documents_store]
+    embedder = load_embedder()
+    new_files = [f for f in uploaded_files if f.name not in st.session_state.documents_store]
 
     if new_files:
         for uf in new_files:
@@ -110,22 +122,21 @@ if uploaded_files:
                     }
                     st.session_state.all_chunks.extend(chunks)
                     st.success(f"✅ **{uf.name}** — {len(chunks)} chunks")
-                    st.session_state["q_input"] = ""
 
                 except Exception as e:
                     st.error(f"❌ Lỗi khi xử lý {uf.name}: {str(e)}")
     else:
         st.info("✅ Tất cả file đã được tải lên trước đó.")
 
-# ── Q&A
+# ── Q&A Section
 if st.session_state.documents_store:
     st.markdown("---")
 
-    # Câu 8: Filter theo document
+    # Lọc tài liệu
     all_doc_names = list(st.session_state.documents_store.keys())
     selected_docs = all_doc_names
     if len(all_doc_names) > 1:
-        st.subheader("🔎 Lọc tài liệu (Câu 8)")
+        st.subheader("🔎 Lọc tài liệu")
         selected_docs = st.multiselect(
             "Tìm kiếm trong những tài liệu nào? (bỏ trống = tất cả)",
             all_doc_names,
@@ -134,7 +145,6 @@ if st.session_state.documents_store:
 
     st.subheader("💬 Đặt câu hỏi")
 
-    # Câu 2: Hiển thị lịch sử
     render_chat_history(st.session_state.chat_history)
 
     question = st.text_input(
@@ -144,6 +154,7 @@ if st.session_state.documents_store:
     )
 
     if question:
+        # Lấy chunks từ tài liệu được chọn
         selected_chunks = []
         for doc_name in (selected_docs if selected_docs else all_doc_names):
             selected_chunks.extend(st.session_state.documents_store[doc_name]["chunks"])
@@ -153,10 +164,16 @@ if st.session_state.documents_store:
         else:
             with st.spinner("🤔 Đang tìm kiếm và sinh câu trả lời..."):
                 try:
-                    embedder  = load_embedder()
-                    # Lấy filename đầu tiên trong selected_docs
-                    current_filename = selected_docs[0] if selected_docs else None
-                    retriever = build_retriever(selected_chunks, embedder, search_mode, top_k, current_filename)
+                    embedder = load_embedder()
+                    
+                    # Sử dụng real_search_mode thay vì search_mode thô
+                    retriever = build_retriever(
+                        selected_chunks, 
+                        embedder, 
+                        real_search_mode,   # ← Truyền mode đã mapping
+                        top_k,
+                        filename=None       # Nếu cần filename cho GraphRAG, có thể chỉnh sau
+                    )
 
                     answer, citations, self_eval, rewritten_q, elapsed = get_answer(
                         question, retriever,
@@ -164,19 +181,12 @@ if st.session_state.documents_store:
                         top_k, st.session_state.chat_history
                     )
 
-                    # Câu 10: Query rewrite notice
                     render_rewrite_notice(question, rewritten_q)
-
-                    # Answer
                     render_answer(answer, elapsed)
-
-                    # Câu 10: Self-RAG badge
                     render_self_rag_badge(self_eval)
-
-                    # Câu 5: Citations
                     render_citations(citations)
 
-                    # Câu 2: Lưu lịch sử
+                    # Lưu lịch sử
                     st.session_state.chat_history.append({
                         "question":  question,
                         "answer":    answer,
@@ -193,4 +203,4 @@ else:
     render_empty_state()
 
 st.markdown("---")
-st.caption("SmartDoc AI — Đại học Sài Gòn | OSSD Spring 2026 | LangChain + FAISS + Ollama")
+st.caption("SmartDoc AI — Đại học Sài Gòn | OSSD Spring 2026 | LangChain + FAISS + Neo4j + Ollama")
