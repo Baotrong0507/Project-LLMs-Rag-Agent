@@ -1,7 +1,8 @@
 """
 ui/sidebar.py
 Toàn bộ sidebar: settings, file list, history, nút xóa.
-Đã cập nhật Search Mode với nhóm Vector-based và GraphRAG-based
+Search Mode chia 2 cấp: chế độ chính (RAG / GraphRAG) → sub-mode tương ứng.
+Trả về search_category ("rag"|"graphrag") và search_mode (key sạch).
 """
 
 import streamlit as st
@@ -26,22 +27,57 @@ def render_sidebar() -> dict:
 
         st.markdown("---")
 
-        # ── Câu 7: Search Mode (ĐÃ NHÓM RÕ RÀNG)
+        # ── Câu 7: Search Mode (2 cấp: chế độ chính → sub-mode)
         st.markdown("### 🔍 Search Mode")
-        
-        search_mode = st.selectbox(
-            "Chế độ tìm kiếm:",
-            [
-                "Vector-based",
-                "   • Similarity (Mặc định)",
-                "   • Hybrid (Vector + BM25)",
-                "   • MMR (Đa dạng)",
-                "GraphRAG-based",
-                "   • GraphRAG Cơ bản",
-                "   • GraphRAG + Vector Hybrid (Khuyến nghị)"
-            ]
+
+        # Cấp 1: chọn chế độ chính
+        search_category = st.radio(
+            "Chế độ chính:",
+            ["🗂️ RAG (Vector-based)", "🕸️ GraphRAG"],
+            horizontal=True,
+            key="search_category"
         )
-        
+
+        # Cấp 2: sub-mode tương ứng
+        if search_category == "🗂️ RAG (Vector-based)":
+            RAG_SUB_MODES = {
+                "Similarity (Mặc định)": "similarity",
+                "Hybrid – Vector + BM25": "hybrid",
+                "MMR – Đa dạng kết quả":  "mmr",
+            }
+            rag_choice = st.radio(
+                "Chiến lược RAG:",
+                list(RAG_SUB_MODES.keys()),
+                index=0,
+                key="rag_sub_mode",
+                help=(
+                    "**Similarity**: tìm kiếm thuần vector cosine.\n\n"
+                    "**Hybrid**: kết hợp vector + BM25 keyword search.\n\n"
+                    "**MMR**: tối đa hoá đa dạng, giảm trùng lặp."
+                )
+            )
+            search_mode         = RAG_SUB_MODES[rag_choice]
+            search_category_key = "rag"
+
+        else:  # GraphRAG
+            GRAPH_SUB_MODES = {
+                "GraphRAG Cơ bản":                        "graphrag_basic",
+                "GraphRAG + Vector Hybrid (Khuyến nghị)": "graphrag_hybrid",
+            }
+            graph_choice = st.radio(
+                "Chiến lược GraphRAG:",
+                list(GRAPH_SUB_MODES.keys()),
+                index=1,
+                key="graphrag_sub_mode",
+                help=(
+                    "**GraphRAG Cơ bản**: duyệt đồ thị tri thức Neo4j thuần túy.\n\n"
+                    "**GraphRAG + Vector Hybrid**: kết hợp đồ thị + vector FAISS "
+                    "để tăng độ chính xác."
+                )
+            )
+            search_mode         = GRAPH_SUB_MODES[graph_choice]
+            search_category_key = "graphrag"
+
         top_k = st.slider("Top K kết quả", 1, 10, 3)
 
         st.markdown("---")
@@ -99,7 +135,8 @@ def render_sidebar() -> dict:
         "chunk_strategy":     chunk_strategy,
         "chunk_size":         chunk_size,
         "chunk_overlap":      chunk_overlap,
-        "search_mode":        search_mode,          # ← Chuỗi có dấu cách + emoji
+        "search_category":    search_category_key,   # "rag" | "graphrag"
+        "search_mode":        search_mode,           # key sạch, ví dụ "similarity", "hybrid", ...
         "top_k":              top_k,
         "use_rerank":         use_rerank,
         "use_self_rag":       use_self_rag,

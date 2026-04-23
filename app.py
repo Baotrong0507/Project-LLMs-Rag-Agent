@@ -1,6 +1,6 @@
 """
 app.py — Entry point của SmartDoc AI
-Đã cập nhật xử lý Search Mode với nhóm Vector-based & GraphRAG-based
+Search Mode dùng key sạch từ sidebar, map sang build_retriever qua SEARCH_MODE_MAP.
 """
 
 import streamlit as st
@@ -58,34 +58,24 @@ config = render_sidebar()
 chunk_strategy    = config["chunk_strategy"]
 chunk_size        = config["chunk_size"]
 chunk_overlap     = config["chunk_overlap"]
-search_mode       = config["search_mode"]      # ← Chuỗi có dấu cách + emoji
+search_mode        = config["search_mode"]       # key sạch: "similarity"|"hybrid"|"mmr"|"graphrag_basic"|"graphrag_hybrid"
+search_category    = config["search_category"]   # "rag" | "graphrag"
 top_k             = config["top_k"]
 use_rerank        = config["use_rerank"]
 use_self_rag      = config["use_self_rag"]
 use_conversational = config["use_conversational"]
 
 # ========================
-# XỬ LÝ SEARCH MODE (Mapping từ tên hiển thị sang logic thực tế)
+# MAPPING SEARCH MODE → build_retriever
 # ========================
-def get_real_search_mode(display_mode: str) -> str:
-    """Chuyển đổi từ chuỗi hiển thị sang mode thực tế dùng trong build_retriever"""
-    display_mode = display_mode.strip()
-    
-    if "GraphRAG + Vector Hybrid" in display_mode:
-        return "GraphRAG_Hybrid"
-    elif "GraphRAG Cơ bản" in display_mode:
-        return "GraphRAG"
-    elif "Hybrid (Vector + BM25)" in display_mode:
-        return "Hybrid"
-    elif "MMR (Đa dạng)" in display_mode:
-        return "MMR"
-    elif "Similarity (Mặc định)" in display_mode:
-        return "Similarity"
-    else:
-        return "Similarity"  # fallback
-
-
-real_search_mode = get_real_search_mode(search_mode)
+SEARCH_MODE_MAP = {
+    "similarity":       "Similarity",
+    "hybrid":           "Hybrid",
+    "mmr":              "MMR",
+    "graphrag_basic":   "GraphRAG",
+    "graphrag_hybrid":  "GraphRAG_Hybrid",
+}
+real_search_mode = SEARCH_MODE_MAP.get(search_mode, "Similarity")
 
 # ========================
 # MAIN UI
@@ -165,20 +155,28 @@ if st.session_state.documents_store:
             with st.spinner("🤔 Đang tìm kiếm và sinh câu trả lời..."):
                 try:
                     embedder = load_embedder()
-                    
-                    # Sử dụng real_search_mode thay vì search_mode thô
+
+                    # Với GraphRAG: lấy filename của file đầu tiên được chọn
+                    # (GraphRAG build graph theo từng file riêng lẻ)
+                    graph_filename = None
+                    if search_category == "graphrag":
+                        active_docs = selected_docs if selected_docs else all_doc_names
+                        graph_filename = active_docs[0] if active_docs else None
+
                     retriever = build_retriever(
-                        selected_chunks, 
-                        embedder, 
-                        real_search_mode,   # ← Truyền mode đã mapping
+                        selected_chunks,
+                        embedder,
+                        real_search_mode,
                         top_k,
-                        filename=None       # Nếu cần filename cho GraphRAG, có thể chỉnh sau
+                        filename=graph_filename
                     )
 
                     answer, citations, self_eval, rewritten_q, elapsed = get_answer(
                         question, retriever,
                         use_rerank, use_self_rag, use_conversational,
-                        top_k, st.session_state.chat_history
+                        top_k, st.session_state.chat_history,
+                        search_category=search_category,
+                        search_mode=search_mode,
                     )
 
                     render_rewrite_notice(question, rewritten_q)

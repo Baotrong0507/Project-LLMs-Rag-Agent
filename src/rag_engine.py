@@ -7,7 +7,6 @@ Câu 10: Self-RAG Evaluation + Query Rewriting
 import json
 import time
 from langchain_ollama import OllamaLLM
-from langchain_community.llms import Ollama
 from src.logger import logger
 from src.retriever import rerank_documents, load_cross_encoder
 
@@ -83,7 +82,9 @@ def get_answer(
     use_self_rag: bool,
     use_conversational: bool,
     top_k: int,
-    chat_history: list
+    chat_history: list,
+    search_category: str = "rag",
+    search_mode: str = "similarity",
 ) -> tuple:
     """
     Pipeline RAG chính:
@@ -98,6 +99,11 @@ def get_answer(
     Returns: (answer, citations, self_eval, rewritten_q, elapsed)
     """
     logger.info(f"Query: {question}")
+    logger.info(
+        f"Search config | category={search_category} | mode={search_mode} "
+        f"| top_k={top_k} | rerank={use_rerank} "
+        f"| self_rag={use_self_rag} | conversational={use_conversational}"
+    )
 
     # 7.2.3: Khởi tạo LLM
     llm = OllamaLLM(model=LLM_MODEL, temperature=TEMPERATURE)

@@ -30,11 +30,23 @@ def extract_entities(text: str) -> list:
     return [x for x in entities if len(x) > 2 and not (x in seen or seen.add(x))][:20]
 
 
+def ensure_fulltext_index(session):
+    """Tạo fulltext index cho Entity.name nếu chưa tồn tại."""
+    try:
+        session.run("""
+            CREATE FULLTEXT INDEX entityNameIndex IF NOT EXISTS
+            FOR (e:Entity) ON EACH [e.name]
+        """)
+    except Exception as e:
+        logger.warning(f"[GraphRAG] Could not create fulltext index: {e}")
+
+
 def build_graph_from_chunks(chunks: list, filename: str):
     driver = get_driver()
     logger.info(f"[GraphRAG] Building/checking graph for {filename} ({len(chunks)} chunks)")
 
     with driver.session() as session:
+        ensure_fulltext_index(session)
         # Kiểm tra graph đã tồn tại chưa (sửa bug: dùng session đúng)
         result = session.run("""
             MATCH (d:Document {source_file: $f})
@@ -86,46 +98,86 @@ def query_graph(question: str, filename: str = None, top_k: int = 3):
             driver.close()
             return []
 
-        # === CẢI TIẾN: Tìm theo Entity liên quan đến question ===
         logger.info(f"[GraphRAG] Searching graph for question: {question[:100]}...")
 
-        result = session.run("""
-            // Tìm entities khớp với từ trong question (text search)
-            CALL db.index.fulltext.queryNodes("entityNameIndex", $query) YIELD node, score
-            WITH node as e, score
-            MATCH (d:Document)-[:CONTAINS]->(e)
-            WHERE ($filename IS NULL OR d.source_file = $filename)
-            RETURN DISTINCT d.content as content, d.chunk_index as page, score
-            ORDER BY score DESC
-            LIMIT $limit
-        """, {
-            "query": question, 
-            "filename": filename,
-            "limit": top_k * 5
-        })
+        # === BƯỚC 1: Tách từ khóa từ question ===
+        # Fulltext index chỉ match từng từ ngắn, không match câu dài
+        stop_words = {
+            "của", "và", "hoặc", "các", "trong", "theo", "được",
+            "dựa", "trên", "đã", "liệt", "kê", "mục", "lục",
+            "tóm", "tắt", "nội", "dung", "văn", "bản", "tài",
+            "liệu", "thông", "tin", "là", "có", "với", "về",
+            "này", "cho", "từ", "the", "of", "in", "to", "a",
+            "một", "những", "để", "như", "khi", "sau", "trước",
+        }
+        keywords = [
+            w.strip(".,?!").lower()
+            for w in question.split()
+            if len(w.strip(".,?!")) > 2 and w.strip(".,?!").lower() not in stop_words
+        ]
+        keywords = list(dict.fromkeys(keywords))[:10]
+        logger.info(f"[GraphRAG] Keywords extracted: {keywords}")
 
-        for r in result:
-            docs.append(Document(
-                page_content=r["content"],
-                metadata={
-                    "method": "graph_entity",
-                    "score": r["score"],
-                    "page": r.get("page")
-                }
-            ))
+        # === BƯỚC 2: Fulltext search từng keyword, gộp kết quả ===
+        seen_ids = set()
+        for kw in keywords:
+            try:
+                result = session.run("""
+                    CALL db.index.fulltext.queryNodes("entityNameIndex", $query)
+                    YIELD node, score
+                    MATCH (d:Document)-[:CONTAINS]->(node)
+                    WHERE ($filename IS NULL OR d.source_file = $filename)
+                    AND NOT d.chunk_id IN $seen
+                    RETURN DISTINCT d.chunk_id as chunk_id,
+                                    d.content   as content,
+                                    d.chunk_index as page,
+                                    score
+                    ORDER BY score DESC
+                    LIMIT $limit
+                """, {
+                    "query":    kw,
+                    "filename": filename,
+                    "seen":     list(seen_ids),
+                    "limit":    top_k * 2,
+                })
+                for r in result:
+                    cid = r["chunk_id"]
+                    if cid not in seen_ids:
+                        seen_ids.add(cid)
+                        docs.append(Document(
+                            page_content=r["content"],
+                            metadata={
+                                "method":  "graph_entity",
+                                "keyword": kw,
+                                "score":   r["score"],
+                                "page":    r.get("page"),
+                            }
+                        ))
+                if len(docs) >= top_k * 3:
+                    break
+            except Exception as e:
+                logger.warning(f"[GraphRAG] Fulltext ''{kw}''  failed: {e}")
 
-        # Nếu không tìm được gì → fallback nhẹ
-        if len(docs) == 0:
-            logger.info("[GraphRAG] No graph match → light fallback")
+        # === BƯỚC 3: Fallback — lấy document theo file nếu vẫn thiếu ===
+        if len(docs) < top_k:
+            logger.info(f"[GraphRAG] Only {len(docs)} docs via entity → fallback by file")
             result = session.run("""
                 MATCH (d:Document)
                 WHERE ($filename IS NULL OR d.source_file = $filename)
-                RETURN d.content as content, d.chunk_index as page
+                AND NOT d.chunk_id IN $seen
+                RETURN d.chunk_id as chunk_id, d.content as content, d.chunk_index as page
+                ORDER BY d.chunk_index ASC
                 LIMIT $limit
-            """, {"filename": filename, "limit": top_k * 3})
-            
+            """, {
+                "filename": filename,
+                "seen":     list(seen_ids),
+                "limit":    (top_k - len(docs)) * 2,
+            })
             for r in result:
-                docs.append(Document(page_content=r["content"], metadata={"method": "fallback"}))
+                docs.append(Document(
+                    page_content=r["content"],
+                    metadata={"method": "fallback", "page": r.get("page")}
+                ))
 
     driver.close()
     logger.info(f"[GraphRAG] Retrieved {len(docs)} documents via graph")
