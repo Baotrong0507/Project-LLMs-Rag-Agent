@@ -71,14 +71,17 @@ def build_retriever(chunks: list, embedder, search_mode: str, top_k: int,
     """
 
     # ========================
-    # Mapping search_mode từ sidebar (có emoji và khoảng trắng)
+    # Dispatch theo clean key từ sidebar
     # ========================
-    mode = search_mode.strip()
+    mode = search_mode.strip().lower()
 
-    if "GraphRAG + Vector Hybrid" in mode:
+    # GraphRAG-based modes
+    if mode == "graphrag_hybrid":
+        logger.info("Build retriever | mode=graphrag_hybrid")
         return _build_graph_hybrid_retriever(chunks, embedder, filename, top_k)
-    
-    elif "GraphRAG Cơ bản" in mode:
+
+    if mode in ("graphrag_basic", "graphrag"):
+        logger.info("Build retriever | mode=graphrag_basic")
         return _build_graph_retriever(chunks, filename, top_k)
 
     # ========================
@@ -86,17 +89,18 @@ def build_retriever(chunks: list, embedder, search_mode: str, top_k: int,
     # ========================
     vector_store = FAISS.from_documents(chunks, embedder)
 
-    if "Hybrid (Vector + BM25)" in mode:
+    if mode == "hybrid":
+        logger.info("Build retriever | mode=hybrid")
         vector_retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
-        bm25_retriever = BM25Retriever.from_documents(chunks)
+        bm25_retriever   = BM25Retriever.from_documents(chunks)
         bm25_retriever.k = top_k
-        
         retriever = EnsembleRetriever(
             retrievers=[bm25_retriever, vector_retriever],
             weights=[0.4, 0.6]          # BM25: 40% - Vector: 60%
         )
 
-    elif "MMR (Đa dạng)" in mode:
+    elif mode == "mmr":
+        logger.info("Build retriever | mode=mmr")
         retriever = vector_store.as_retriever(
             search_type="mmr",
             search_kwargs={
@@ -106,7 +110,8 @@ def build_retriever(chunks: list, embedder, search_mode: str, top_k: int,
             }
         )
 
-    else:  # Similarity (Mặc định) hoặc các mode khác
+    else:  # similarity hoặc fallback
+        logger.info(f"Build retriever | mode=similarity (input='{search_mode}')")
         retriever = vector_store.as_retriever(
             search_type="similarity",
             search_kwargs={"k": top_k}

@@ -1,11 +1,10 @@
-
 import time
 import sys
 sys.path.insert(0, '.')
 
 from src.document_loader import load_document
-from src.chunker import split_documents
-from src.retriever import load_embedder, build_retriever
+from src.chunker         import split_documents
+from src.retriever       import load_embedder, build_retriever
 
 # ========================
 # CÁC CÂU HỎI TEST
@@ -16,65 +15,58 @@ TEST_QUESTIONS = [
     "FAISS hoạt động như thế nào?",
     "Các tính năng của hệ thống?",
     "LangChain framework là gì?",
+    "Tóm tắt nội dung của tài liệu",
 ]
 
 print("Đang tải tài liệu và chunks...")
 with open("data/gutenberg.pdf", "rb") as f:
     file_bytes = f.read()
 
-docs = load_document(file_bytes, "gutenberg.pdf")
+docs   = load_document(file_bytes, "gutenberg.pdf")
 chunks = split_documents(docs, "Recursive (Mặc định)", 1000, 100)
-
 embedder = load_embedder()
-
 print(f"Đã load {len(chunks)} chunks từ gutenberg.pdf\n")
 
 # ========================
-# DANH SÁCH CÁC MODE CẦN TEST (ĐÃ CẬP NHẬT)
+# DANH SÁCH MODE — dùng clean key khớp với retriever.py đã fix
 # ========================
 MODES = [
-    "   • Similarity (Mặc định)",
-    "   • Hybrid (Vector + BM25)",
-    "   • MMR (Đa dạng)",
-    "   • GraphRAG Cơ bản",
-    "   • GraphRAG + Vector Hybrid (Khuyến nghị)",
+    ("Similarity (Mặc định)",          "similarity"),
+    ("Hybrid (Vector + BM25)",         "hybrid"),
+    ("MMR (Đa dạng)",                  "mmr"),
+    ("GraphRAG Cơ bản",                "graphrag_basic"),
+    ("GraphRAG + Vector Hybrid",       "graphrag_hybrid"),
 ]
 
-print(f"{'Chế độ':<40} {'TB (s)':<10} {'Min (s)':<10} {'Max (s)':<10}")
-print("-" * 75)
+print(f"{'Chế độ':<35} {'TB (s)':<10} {'Min (s)':<10} {'Max (s)':<10} {'Lỗi'}")
+print("-" * 80)
 
-for mode in MODES:
-    times = []
-    print(f"Đang test: {mode.strip()}")
-    
+for label, mode_key in MODES:
+    times  = []
+    errors = 0
+    print(f"Đang test: {label}")
+ 
     for q in TEST_QUESTIONS:
         t0 = time.time()
-        
         try:
-            # Truyền filename cho GraphRAG
             retriever = build_retriever(
-                chunks, 
-                embedder, 
-                mode, 
-                top_k=3, 
+                chunks,
+                embedder,
+                mode_key,           # ← clean key
+                top_k=3,
                 filename="gutenberg.pdf"
             )
-            
-            # Gọi retriever
-            if hasattr(retriever, 'invoke'):
-                docs_ret = retriever.invoke(q)
+            if hasattr(retriever, "invoke"):
+                retriever.invoke(q)
             else:
-                docs_ret = retriever.get_relevant_documents(q)
-                
-            elapsed = time.time() - t0
-            times.append(elapsed)
-            
+                retriever.get_relevant_documents(q)
         except Exception as e:
-            elapsed = time.time() - t0
-            times.append(elapsed)
-            print(f"   Lỗi với câu hỏi: {q[:50]}... → {type(e).__name__}")
-    
+            errors += 1
+            print(f"   ⚠ Lỗi '{q[:40]}': {type(e).__name__}: {e}")
+        finally:
+            times.append(time.time() - t0)
+
     avg = sum(times) / len(times)
-    print(f"{mode:<40} {avg:<10.2f} {min(times):<10.2f} {max(times):<10.2f}")
+    print(f"{label:<35} {avg:<10.2f} {min(times):<10.2f} {max(times):<10.2f} {errors}/{len(TEST_QUESTIONS)}")
 
 print("\n✅ Benchmark hoàn tất!")
